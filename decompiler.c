@@ -346,7 +346,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Usage: %s <owned-ms42-image.bin>\n", argv[0]);
     return 2;
   }
-  int fd = open(argv[1], O_RDONLY);
+  /* Avoid blocking on a FIFO before fstat can reject non-regular input. */
+  int fd = open(argv[1], O_RDONLY | O_NONBLOCK);
   if (fd < 0) { perror("HOLD: cannot open input"); return 2; }
   struct stat st;
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
