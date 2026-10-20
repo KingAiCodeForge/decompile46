@@ -6,9 +6,10 @@
 #include <stdint.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define BOOTLOADER_START  0x00000
-#define BOOTLOADER_END    0x0FFFF
+#define BOOTLOADER_END    0x10000 /* exclusive: do not omit file byte 0xFFFF */
 #define PROGRAM_1_START   0x10000
 #define PROGRAM_1_END     0x3FFFF
 #define UNUSED_START      0x40000
@@ -292,51 +293,91 @@ struct op opcodes[] = {
   {.mnemo="bset", .size=2},
 };
 
-void quit(const char * description) {
-  printf("Aborting %s: %s\n", description, strerror(errno));
-  exit(1);
-}
+_Static_assert(sizeof(opcodes) / sizeof(opcodes[0]) == 256,
+               "C166 opcode-byte table must have all 256 entries");
 
-void dissasemble_section(uint8_t * buffer, off_t start, off_t end) {
-  off_t index = start;
-  struct op current;
-  while (index < end) {
-    current = opcodes[buffer[index]];
-    if (current.size == 2) {
-      printf("[%05lx][%02x %02x] %s %02x\n",
-        index,
-        buffer[index], buffer[index+1],
-        current.mnemo, buffer[index+1]);
-      index += 2;
-    } else if (current.size == 4) {
-      printf("[%05lx][%02x %02x %02x %02x] %s %02x %02x %02x\n", index,
-        buffer[index], buffer[index+1], buffer[index+2], buffer[index+3],
-        current.mnemo, buffer[index+1], buffer[index+2], buffer[index+3]);
-      index += 4;
-    } else {
-      printf("What is this? [%05lx][%02x %02x %02x %02x]\n", index,
-        buffer[index], buffer[index+1], buffer[index+2], buffer[index+3]);
-      quit("invalid operation size");
-    }
+/* This is bounded instruction-size stepping, not validated semantic
+ * decompilation, control-flow reconstruction or a target-exact C167 decoder.
+ * Unsupported opcodes and instructions straddling the requested section HOLD
+ * rather than guessing a length or looking beyond the mapped image. */
+static int disassemble_section(const uint8_t *buffer, size_t length,
+                               size_t start, size_t end) {
+  if (buffer == NULL || start > end || end > length) {
+    fprintf(stderr, "HOLD: disassembly bounds outside input image\n");
+    return 2;
   }
+  for (size_t index = start; index < end;) {
+    uint8_t opcode = buffer[index];
+    const struct op current = opcodes[opcode];
+    if (current.size != 2 && current.size != 4) {
+      fprintf(stderr,
+              "HOLD: unknown/unsupported instruction at 0x%05zx, opcode 0x%02x\n",
+              index, opcode);
+      return 2;
+    }
+    if ((size_t)current.size > end - index ||
+        (size_t)current.size > length - index) {
+      fprintf(stderr,
+              "HOLD: instruction at 0x%05zx crosses section/file boundary\n",
+              index);
+      return 2;
+    }
+    printf("[%05zx][", index);
+    for (size_t i = 0; i < current.size; ++i) {
+      printf("%s%02x", i ? " " : "", buffer[index + i]);
+    }
+    printf("] %s", current.mnemo);
+    for (size_t i = 1; i < current.size; ++i) {
+      printf(" %02x", buffer[index + i]);
+    }
+    putchar('\n');
+    index += current.size;
+  }
+  return 0;
 }
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    printf("%s file.bin\n", argv[0]);
-    exit(1);
+  if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+    printf("Usage: %s <owned-ms42-image.bin>\n"
+           "Read-only legacy byte-stepper for [0, 65536); input 64KiB-16MiB.\n"
+           "Opcode semantics are unverified. Exit 0: scan complete; 2: HOLD/error.\n",
+           argv[0]);
+    return fflush(stdout) == 0 ? 0 : 2;
   }
-  int fd = open(argv[1], O_RDONLY);
-  if (fd < 0) {
-    quit("cant open file");
+  if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    puts("decompile46 0.1.0-bounded.1");
+    return fflush(stdout) == 0 ? 0 : 2;
   }
-  off_t size = lseek(fd, 0, SEEK_END);
-  lseek(fd, 0, SEEK_SET);
-  uint8_t * buffer = mmap(0, size, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+  if (argc != 2) {
+    fprintf(stderr, "Usage: %s <owned-ms42-image.bin>\n", argv[0]);
+    return 2;
+  }
+  /* Avoid blocking on a FIFO before fstat can reject non-regular input. */
+  int fd = open(argv[1], O_RDONLY | O_NONBLOCK);
+  if (fd < 0) { perror("HOLD: cannot open input"); return 2; }
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+      st.st_size < BOOTLOADER_END || st.st_size > 16 * 1024 * 1024) {
+    fprintf(stderr, "HOLD: expected regular file with at least first 64KiB and <=16MiB\n");
+    close(fd);
+    return 2;
+  }
+  const size_t length = (size_t)st.st_size;
+  const uint8_t *buffer = mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, 0);
   if (buffer == MAP_FAILED) {
-    quit("cant allocate memory");
+    perror("HOLD: mmap");
+    close(fd);
+    return 2;
   }
-  printf("Name: %s, size %ld \n", argv[1], size);
-  dissasemble_section(buffer, BOOTLOADER_START, BOOTLOADER_END);
-  exit(0);
+  printf("Image: %s; bytes=%zu; bounded region=[0x00000,0x10000)\n",
+         argv[1], length);
+  int code = disassemble_section(buffer, length,
+                                 BOOTLOADER_START, BOOTLOADER_END);
+  munmap((void *)buffer, length);
+  close(fd);
+  if (fflush(stdout) != 0 || ferror(stdout)) {
+    fprintf(stderr, "HOLD: cannot write complete listing\n");
+    code = 2;
+  }
+  return code;
 }

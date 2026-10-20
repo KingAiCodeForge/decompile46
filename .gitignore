@@ -1,0 +1,15 @@
+# Local build and test products.
+/decompile46
+/section_bounds_test
+/build/
+__pycache__/
+*.pyc
+# Local firmware, credentials and configs are never release inputs.
+*.bin
+*.rom
+*.hex
+.env
+.env.*
+/inputs/
+/local/
+/artifacts/
