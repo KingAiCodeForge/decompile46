@@ -293,11 +293,6 @@ struct op opcodes[] = {
   {.mnemo="bset", .size=2},
 };
 
-void quit(const char * description) {
-  printf("Aborting %s: %s\n", description, strerror(errno));
-  exit(1);
-}
-
 _Static_assert(sizeof(opcodes) / sizeof(opcodes[0]) == 256,
                "C166 opcode-byte table must have all 256 entries");
 
@@ -342,6 +337,17 @@ static int disassemble_section(const uint8_t *buffer, size_t length,
 }
 
 int main(int argc, char *argv[]) {
+  if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+    printf("Usage: %s <owned-ms42-image.bin>\n"
+           "Read-only legacy byte-stepper for [0, 65536); input 64KiB-16MiB.\n"
+           "Opcode semantics are unverified. Exit 0: scan complete; 2: HOLD/error.\n",
+           argv[0]);
+    return fflush(stdout) == 0 ? 0 : 2;
+  }
+  if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    puts("decompile46 0.1.0-bounded.1");
+    return fflush(stdout) == 0 ? 0 : 2;
+  }
   if (argc != 2) {
     fprintf(stderr, "Usage: %s <owned-ms42-image.bin>\n", argv[0]);
     return 2;
@@ -365,9 +371,13 @@ int main(int argc, char *argv[]) {
   }
   printf("Image: %s; bytes=%zu; bounded region=[0x00000,0x10000)\n",
          argv[1], length);
-  const int code = disassemble_section(buffer, length,
-                                       BOOTLOADER_START, BOOTLOADER_END);
+  int code = disassemble_section(buffer, length,
+                                 BOOTLOADER_START, BOOTLOADER_END);
   munmap((void *)buffer, length);
   close(fd);
+  if (fflush(stdout) != 0 || ferror(stdout)) {
+    fprintf(stderr, "HOLD: cannot write complete listing\n");
+    code = 2;
+  }
   return code;
 }

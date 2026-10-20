@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -27,6 +28,8 @@ class Safety(unittest.TestCase):
         cls.binary = Path(cls.temp.name) / "decompile46_test"
         cls.harness = Path(cls.temp.name) / "section_bounds_test"
         compiler = shlex.split(os.environ.get("CC", "cc"))
+        if not compiler or shutil.which(compiler[0]) is None:
+            raise RuntimeError("C compiler not found; install a C11 POSIX compiler or set CC")
         flags = ["-std=c11", "-Wall", "-Wextra", "-Werror"]
         flags += shlex.split(os.environ.get("CFLAGS", ""))
         for source, binary in ((SOURCE, cls.binary),
@@ -156,6 +159,39 @@ class Safety(unittest.TestCase):
                 r = self.run_cli(*args)
                 self.assertEqual(r.returncode, 2)
                 self.assertIn("Usage:", r.stderr)
+
+    def test_help_and_version_without_input(self):
+        for option, expected in (("--help", "Usage:"),
+                                 ("--version", "0.1.0-bounded.1")):
+            with self.subTest(option=option):
+                run = self.run_cli(option)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertIn(expected, run.stdout)
+
+    def test_outside_checkout_with_spaces_and_unicode_path(self):
+        with tempfile.TemporaryDirectory(prefix="scanner space ") as directory:
+            cwd = Path(directory)
+            image = cwd / "synthetic \u00e9\u65e5\u672c.bin"
+            image.write_bytes(SAFE_IMAGE)
+            before = hashlib.sha256(image.read_bytes()).hexdigest()
+            run = subprocess.run([str(self.binary), image.name], cwd=cwd,
+                                 capture_output=True, text=True, timeout=10)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn("[0fffe][cc 00]", run.stdout)
+            self.assertEqual(hashlib.sha256(image.read_bytes()).hexdigest(), before)
+            self.assertEqual(list(cwd.iterdir()), [image])
+
+    @unittest.skipUnless(Path("/dev/full").exists(), "Linux /dev/full required")
+    def test_output_failure_is_not_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "fixture.bin"
+            image.write_bytes(SAFE_IMAGE)
+            with open("/dev/full", "wb") as destination:
+                run = subprocess.run([str(self.binary), str(image)],
+                                     stdout=destination, stderr=subprocess.PIPE,
+                                     text=True, timeout=10)
+            self.assert_hold(run, "cannot write complete listing")
+            self.assertEqual(image.read_bytes(), SAFE_IMAGE)
 
     def test_direct_section_bounds_and_guard_page_matrix(self):
         r = subprocess.run([str(self.harness)], capture_output=True,

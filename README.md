@@ -1,4 +1,4 @@
-# decompile46 — legacy C166/C167 byte-stepper (review)
+# decompile46 — legacy C166/C167 byte-stepper
 
 This is an old 256-entry **opcode size and mnemonic sketch**. It is **not** an
 actual high-level decompiler or a proven source of ECU map consumers, DPP
@@ -16,6 +16,29 @@ cc -std=c11 -Wall -Wextra -Werror decompiler.c -o decompile46
 python3 -m unittest -v test_static_bounds.py
 ./decompile46 /path/to/hash-checked-owned-firmware.bin > disassembly.txt
 ```
+
+Version `0.1.0-bounded.1` is a bounded-scanner prerelease. Linux/WSL with a
+C11 compiler and POSIX `mmap` is the supported build target. Python 3 is needed
+only for tests. Native Windows and macOS have not been qualified. No compiler,
+Python package, downloaded firmware, or runtime network access is bundled.
+
+`make` builds the CLI; `make test` runs the real-source suite. Install without
+administrator access using `make install PREFIX="$HOME/.local"`, or set `PREFIX`
+to any directory (including one with spaces). `DESTDIR` supports staged installs.
+The installed executable runs from any working directory and accepts absolute or
+relative input paths, including spaces and UTF-8 names. `CC` and `CFLAGS` select
+the toolchain. Missing compiler/dependencies produce a build/test error.
+
+Use `decompile46 --help` for usage or `--version` for the release version.
+Exit 0 means the selected region was stepped according to the legacy size table;
+exit 2 means HOLD/input/output error. Diagnostics go to stderr. Partial listings
+can precede a HOLD, so check exit status before using output. A closed pipe may
+also terminate the process with a nonzero signal status.
+
+The CLI opens only the input, read-only, and writes listings to stdout. Preserve
+original archives separately. Choose a fresh listing filename: a shell
+redirection such as `decompile46 input.bin > input.bin` truncates the input
+*before* the program starts and cannot be prevented by this CLI.
 
 Only source files at least 64 KiB and no larger than 16 MiB are accepted.
 The tool scans **[0x00000,0x10000)**, not the full MS42 512 KiB image. No
@@ -42,6 +65,8 @@ all 256 opcode bytes with 1–4 available bytes immediately before an inaccessib
 guard page. Converted negative `size_t` arguments must be rejected. These checks
 validate bounds behavior against the existing table, **not** the table's ISA
 accuracy. POSIX `mmap`, `mprotect`, and `/dev/zero` are needed for the harness.
+Additional regressions cover UTF-8/space paths from outside the checkout,
+help/version, input preservation, and reporting stdout write failures.
 
 Optional stricter and sanitizer runs (with a supporting GCC/Clang toolchain):
 
@@ -58,3 +83,7 @@ for the exact source hashes, baseline failures, commands, and observed results.
 Keep the input file stable while scanning. The read-only mapping is not a
 snapshot: another process truncating or rewriting it during the scan is outside
 this bounded-input test guarantee.
+
+See [preserved sources](PRESERVED_SOURCES.md) for exact source refs and the
+separate patch-1 prototype. Historical receipts describe their original test
+environment; the current release receipt records fresh qualification.

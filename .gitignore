@@ -1,0 +1,6 @@
+# Local build and test products, never firmware inputs or private configs.
+/decompile46
+/section_bounds_test
+/build/
+__pycache__/
+*.pyc
