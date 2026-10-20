@@ -43,6 +43,7 @@ No repository instructions or pre-existing `.gitignore` were present. Local
 `info/exclude` contained only Git's example comments, and no `core.excludesfile`
 was configured. The allowlist remains these public source/tests/docs/build
 files; no formerly ignored local inputs were found or imported. `.gitignore`
-excludes only generated executable/build/Python cache products. Inputs, local
+excludes generated executable/build/Python cache products, firmware extensions,
+environment secrets, and local input/config/artifact directories. Inputs, local
 configs, and release artifacts are not force-added. Release archives are built
 from the reviewed Git tree, not an entire working directory.
